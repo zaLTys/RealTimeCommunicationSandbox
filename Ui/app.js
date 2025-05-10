@@ -1,103 +1,130 @@
-const apiBase = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-  ? 'http://localhost:5000'
-  : 'http://backend:8080';
+/* =========================================================================
+   app.js – works with GUID product Ids
+   ========================================================================= */
 
-let products = [];
-let username = '';
+/* ------------ 1.  API base --------------------------------------------- */
+const local   = location.hostname === '' || location.hostname === 'localhost';
+const apiBase = local ? 'http://localhost:5000' : 'http://backend:5000';
+console.log('[auction] API →', apiBase);
 
-// —— simple login ——
-document.getElementById('setUser').addEventListener('click', () => {
-  username = document.getElementById('username').value.trim();
-  if (!username) return alert('Enter a username');
-  document.getElementById('login').style.display = 'none';
-  initialise();
-});
+/* ------------ 2.  Username helper -------------------------------------- */
+const usernameBox = document.getElementById('username');
+const currentUser = () => usernameBox.value.trim();
 
-async function initialise() {
-  await loadProducts();        // REST call still seeds the table fast
-  startSignalR();              // WebSocket will then push InitialProducts + deltas
-  setInterval(updateCountdowns, 1000);
-}
+/* ------------ 3.  SignalR connection ----------------------------------- */
+const hub = new signalR.HubConnectionBuilder()
+  .withUrl(`${apiBase}/hubs/auction`)
+  .configureLogging(signalR.LogLevel.Information)
+  .build();
 
-async function loadProducts() {
-  const res = await fetch(`${apiBase}/api/products`);
-  products = await res.json();
-  renderTable();
-}
+hub.on('InitialProducts', list => renderProducts(list, 'hub'));
+hub.on('ReceiveBid',      p    => upsertRow(p,        'hub'));
 
-function renderTable() {
-  const tbody = document.getElementById('products');
+hub.start()
+    .then(() => console.log('%cSignalR ✓', 'color:lime'))
+    .catch(console.error);
+
+/* ------------ 4.  Initial REST seed ------------------------------------ */
+fetch(`${apiBase}/api/products`)
+  .then(r => r.json())
+  .then(list => renderProducts(list, 'rest'))
+  .catch(console.error);
+
+/* ------------ 5.  DOM helpers ------------------------------------------ */
+const tbody = document.querySelector('#products tbody');
+const getId = p => p.id ?? p.Id;   // handle either JSON casing
+const timers = new Map(); 
+
+function renderProducts(list, src) {
+  console.log(`[${src}] render ${list.length} products`);
   tbody.innerHTML = '';
-  products.forEach(p => {
-    const tr = document.createElement('tr');
-    tr.id = `row-${p.id}`;
+  list.forEach(upsertRow);
+}
+
+function upsertRow(p, src = 'ui') {
+  const id = getId(p);                 // ← GUID string
+  if (!id) { console.warn('Product without Id', p); return; }
+
+  let tr = tbody.querySelector(`tr[data-id="${id}"]`);
+  if (!tr) {
+    tr = document.createElement('tr');
+    tr.dataset.id = id;                // store GUID right on the row
     tr.innerHTML = `
       <td>${p.name}</td>
-      <td id="bid-${p.id}">${p.currentBid.toFixed(2)}</td>
-      <td id="user-${p.id}">${p.lastBidder}</td>
-      <td id="rem-${p.id}">${remaining(p.endsAt)}</td>
-      <td><input id="amt-${p.id}" type="number" min="0" step="1"></td>
-      <td><button onclick="makeBid('${p.id}')">Bid</button></td>`;
+      <td class="price"></td>
+      <td class="bidder"></td>
+      <td class="timer"></td>
+      <td>
+        <input class="amt" data-id="${id}" type="number" min="0" step="1">
+        <button class="bid-btn" data-id="${id}">Bid</button>
+      </td>`;
     tbody.appendChild(tr);
-  });
+    refreshTimer(id, p.endsAt, tr.querySelector('.timer'));
+  }
+
+  tr.querySelector('.price').textContent  = `$${p.currentBid}`;
+  tr.querySelector('.bidder').textContent = p.lastBidder || '—';
+  refreshTimer(id, p.endsAt, tr.querySelector('.timer'));
+  flash(tr);
 }
 
-function remaining(endIso) {
-  const diff = new Date(endIso) - Date.now();
-  return diff > 0 ? Math.floor(diff / 1000) + ' s' : 'Ended';
+function refreshTimer(pid, endsAtIso, cell) {
+ // clear old interval if any
+ const prev = timers.get(pid);
+ if (prev) clearInterval(prev.tickId);
+
+ const ends = new Date(endsAtIso);
+ const tickId = setInterval(() => {
+   const ms = ends - Date.now();
+   if (ms <= 0) { clearInterval(tickId); cell.textContent = 'Ended'; return; }
+   const s = Math.floor(ms / 1000);
+   cell.textContent = `${Math.floor(s / 60)}m ${(s % 60).toString().padStart(2,'0')}s`;
+ }, 1000);
+ 
+ timers.set(pid, { ends, tickId });
 }
 
-function updateCountdowns() {
-  products.forEach(p => {
-    const cell = document.getElementById(`rem-${p.id}`);
-    if (cell) cell.textContent = remaining(p.endsAt);
-  });
+function flash(tr) {
+  tr.classList.add('flash');
+  setTimeout(() => tr.classList.remove('flash'), 400);
 }
 
-async function makeBid(id) {
-  const input = document.getElementById(`amt-${id}`);
-  const amount = parseFloat(input.value);
-  if (!amount) return alert('Enter a number');
+/* ------------ 6.  Delegated click handler ------------------------------ */
+document.addEventListener('click', async e => {
+  if (!e.target.matches('.bid-btn')) return;
 
-  const res = await fetch(`${apiBase}/api/bid`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ productId: id, amount, bidder: username })
-  });
+  const id    = e.target.dataset.id;                      // GUID string
+  const tr    = e.target.closest('tr');
+  const amtEl = tr.querySelector('.amt');
+  const amt   = Number(amtEl.value);
+  const user  = currentUser();
 
-  if (!res.ok) return alert(await res.text());
-  input.value = '';
-}
+  if (!user) { alert('Enter a username'); return; }
+  if (!amt)  { alert('Enter a bid amount'); return; }
 
-function startSignalR() {
-  const connection = new signalR.HubConnectionBuilder()
-    .withUrl(`${apiBase}/hubs/auction`)
-    .withAutomaticReconnect()
-    .build();
+  flash(tr);                                              // optimistic flash
 
-  connection.onclose(err => console.warn('SignalR closed', err));
-  connection.onreconnected(id => console.log('SignalR reconnected', id));
+  try {
+    const res = await fetch(`${apiBase}/api/bid`, {
+      method : 'POST',
+      mode   : 'cors',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({ productId: id, amount: amt, bidder: user })
+    });
 
-  connection.on('InitialProducts', list => {
-    console.log('InitialProducts via WS', list);
-    products = list;
-    renderTable();
-  });
+    if (!res.ok) throw new Error(await res.text() || res.status);
 
-  connection.on('ReceiveBid', p => {
-    const idx = products.findIndex(x => x.id === p.id);
-    if (idx !== -1) products[idx] = p; else products.push(p);
+    amtEl.value = '';                                     // clear input
+    console.log(`Bid OK → ${id} : $${amt}`);
+    /* actual row update arrives via Hub */
+  }
+  catch (err) {
+    alert(err.message);
+    console.error(err);
+  }
+});
 
-    document.getElementById(`bid-${p.id}`).textContent = p.currentBid.toFixed(2);
-    document.getElementById(`user-${p.id}`).textContent = p.lastBidder;
-    document.getElementById(`rem-${p.id}`).textContent = remaining(p.endsAt);
-
-    const row = document.getElementById(`row-${p.id}`);
-    row.classList.add('flash');
-    setTimeout(() => row.classList.remove('flash'), 1000);
-  });
-
-  connection.start()
-    .then(() => console.log('SignalR connected'))
-    .catch(console.error);
-}
+/* ------------ 7.  Quick flash style ------------------------------------ */
+const style = document.createElement('style');
+style.textContent = '.flash{animation:flash .4s}@keyframes flash{from{background:#ffd}to{background:transparent}}';
+document.head.appendChild(style);
