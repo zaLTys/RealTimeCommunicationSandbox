@@ -1,6 +1,6 @@
 const apiBase = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-  ? 'http://localhost:5000'        // dev on host
-  : 'http://backend:8080';         // inside compose
+  ? 'http://localhost:5000'
+  : 'http://backend:8080';
 
 let products = [];
 let username = '';
@@ -14,8 +14,8 @@ document.getElementById('setUser').addEventListener('click', () => {
 });
 
 async function initialise() {
-  await loadProducts();
-  startSignalR();
+  await loadProducts();        // REST call still seeds the table fast
+  startSignalR();              // WebSocket will then push InitialProducts + deltas
   setInterval(updateCountdowns, 1000);
 }
 
@@ -30,9 +30,11 @@ function renderTable() {
   tbody.innerHTML = '';
   products.forEach(p => {
     const tr = document.createElement('tr');
+    tr.id = `row-${p.id}`;
     tr.innerHTML = `
       <td>${p.name}</td>
       <td id="bid-${p.id}">${p.currentBid.toFixed(2)}</td>
+      <td id="user-${p.id}">${p.lastBidder}</td>
       <td id="rem-${p.id}">${remaining(p.endsAt)}</td>
       <td><input id="amt-${p.id}" type="number" min="0" step="1"></td>
       <td><button onclick="makeBid('${p.id}')">Bid</button></td>`;
@@ -73,13 +75,29 @@ function startSignalR() {
     .withAutomaticReconnect()
     .build();
 
-  connection.on('ReceiveBid', p => {
-    // update local cache & DOM
-    const idx = products.findIndex(x => x.id === p.id);
-    if (idx !== -1) products[idx] = p; else products.push(p);
-    document.getElementById(`bid-${p.id}`).textContent = p.currentBid.toFixed(2);
-    document.getElementById(`rem-${p.id}`).textContent = remaining(p.endsAt);
+  connection.onclose(err => console.warn('SignalR closed', err));
+  connection.onreconnected(id => console.log('SignalR reconnected', id));
+
+  connection.on('InitialProducts', list => {
+    console.log('InitialProducts via WS', list);
+    products = list;
+    renderTable();
   });
 
-  connection.start();
+  connection.on('ReceiveBid', p => {
+    const idx = products.findIndex(x => x.id === p.id);
+    if (idx !== -1) products[idx] = p; else products.push(p);
+
+    document.getElementById(`bid-${p.id}`).textContent = p.currentBid.toFixed(2);
+    document.getElementById(`user-${p.id}`).textContent = p.lastBidder;
+    document.getElementById(`rem-${p.id}`).textContent = remaining(p.endsAt);
+
+    const row = document.getElementById(`row-${p.id}`);
+    row.classList.add('flash');
+    setTimeout(() => row.classList.remove('flash'), 1000);
+  });
+
+  connection.start()
+    .then(() => console.log('SignalR connected'))
+    .catch(console.error);
 }

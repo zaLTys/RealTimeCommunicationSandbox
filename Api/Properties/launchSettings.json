@@ -18,6 +18,15 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
+    },
+      "AuctionDemo": {
+        "commandName": "Project",
+        "applicationUrl": "http://localhost:5000",
+        "launchBrowser": true,
+        "dotnetRunMessages": true,
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development"
+        }
+      }
     }
   }
-}

@@ -1,13 +1,10 @@
 ﻿using Api.Models;
 
 namespace Api;
-
-using System.Collections.Concurrent;
-
 public class AuctionService
 {
-    private const decimal MinStep = 5m;                       // $5 floor
-    private static readonly TimeSpan BidWindow = TimeSpan.FromSeconds(30);
+    private const decimal MinStep = 1m; 
+    private static readonly TimeSpan BidWindow = TimeSpan.FromSeconds(300);
 
     public List<Product> Products { get; } = new();
 

@@ -24,3 +24,4 @@ public class Product
         LastBidder = LastBidder ?? string.Empty
     };
 }
+

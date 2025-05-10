@@ -2,3 +2,4 @@ body { font-family: system-ui, sans-serif; margin: 1rem; }
 button { cursor: pointer; }
 table { border-collapse: collapse; margin-top: 1rem; min-width: 400px; }
 th, td { border: 1px solid #ccc; padding: .4rem .6rem; text-align: center; }
+.flash { background:#fff2a5; transition: background 0.6s ease-out; }
