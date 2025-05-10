@@ -1,0 +1,15 @@
+version: '3.9'
+services:
+  backend:
+    build: ./Api
+    container_name: auction-backend
+    ports:
+      - "5000:8080"   # host:container
+
+  ui:
+    build: ./Ui
+    container_name: auction-ui
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
