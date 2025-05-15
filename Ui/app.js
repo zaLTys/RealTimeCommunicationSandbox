@@ -13,7 +13,9 @@ const currentUser = () => usernameBox.value.trim();
 
 /* ------------ 3.  SignalR connection ----------------------------------- */
 const hub = new signalR.HubConnectionBuilder()
-  .withUrl(`${apiBase}/hubs/auction`)
+  .withUrl(`${apiBase}/hubs/auction`, {
+   /* transport: signalR.HttpTransportType.LongPolling*/
+  })
   .configureLogging(signalR.LogLevel.Information)
   .build();
 
